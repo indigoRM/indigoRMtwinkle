@@ -593,19 +593,23 @@ def train():
                 [t for t, v in zip(t_inputs, valid_pairs) if v]
             )
 
-        # ── Step 4: Teacher forward → full logits (per teacher) ──────────────
-        teacher_logits_list = []
+        # ── Step 4: Submit all teacher forwards before collecting any result ───────
+        # Each forward_only() returns a LazyCollect object. Submit all teachers first
+        # so their Ray tasks can execute concurrently on their independent device
+        # groups, then collect the results afterwards.
+        teacher_results = []
         teacher_input_ids_list = []
+
         for i, teacher_model in enumerate(teacher_models):
-            t_outputs = teacher_model.forward_only(
-                inputs=teacher_inputs_list[i],
-                return_logits=True,
-                temperature=1.0,
-                disable_lora=True,
-                adapter_name='',
+            teacher_results.append(
+                teacher_model.forward_only(
+                    inputs=teacher_inputs_list[i],
+                    return_logits=True,
+                    temperature=1.0,
+                    disable_lora=True,
+                    adapter_name='',
+                )
             )
-            t_outputs = t_outputs()  # remote_function → actual result
-            teacher_logits_list.append(t_outputs['logits'])
 
             t_prompt_ids = [
                 torch.tensor(feat['input_ids'], dtype=torch.long)
@@ -616,6 +620,12 @@ def train():
                     t_prompt_ids, batch_first=True, padding_value=0,
                 )
             )
+
+        # Collect only after all teacher forward tasks have been submitted.
+        teacher_logits_list = []
+        for teacher_result in teacher_results:
+            t_outputs = teacher_result()
+            teacher_logits_list.append(t_outputs['logits'])
 
         # ── Step 5: Package teacher output ───────────────────────────────────
         # Use student-generated input_ids as labels, but only for the response
