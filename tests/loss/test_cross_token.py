@@ -335,12 +335,14 @@ class TestCrossTokenLossMultiTeacher:
                 student_input_ids,
                 teacher_input_ids,
                 teacher_index,
+                teacher_input_lengths=None,
         ):
             called_teacher_indices.append(teacher_index)
             return original_build_chunk_ids(
                 student_input_ids,
                 teacher_input_ids,
                 teacher_index,
+                teacher_input_lengths,
             )
 
         monkeypatch.setattr(
@@ -411,12 +413,14 @@ class TestCrossTokenLossMultiTeacher:
                 student_input_ids,
                 teacher_input_ids,
                 teacher_index,
+                teacher_input_lengths=None,
         ):
             called_teacher_indices.append(teacher_index)
             return original_build_chunk_ids(
                 student_input_ids,
                 teacher_input_ids,
                 teacher_index,
+                teacher_input_lengths,
             )
 
         monkeypatch.setattr(
@@ -461,6 +465,51 @@ class TestCrossTokenLossMultiTeacher:
 
         assert torch.isfinite(result["loss"])
         assert called_teacher_indices == [0, 1]
+
+
+    def test_teacher_padding_tokens_not_aligned(self):
+        """Padding tokens in teacher inputs should not create alignment chunks."""
+
+        student_tok = FakeTokenizer(30, prefix="tok")
+        teacher_tok = FakeTokenizer(25, prefix="tok")
+
+        loss_fn = CrossTokenLoss(
+            student_tokenizer=student_tok,
+            teacher_tokenizer_group=[teacher_tok],
+            vocab_topk=10,
+            device=torch.device("cpu"),
+        )
+
+        student_input_ids = torch.tensor(
+            [[1, 2, 3, 4, 5]],
+            dtype=torch.long,
+        )
+
+        # Teacher sequence contains two padding positions.
+        teacher_input_ids = torch.tensor(
+            [[1, 2, 3, 0, 0]],
+            dtype=torch.long,
+        )
+
+        teacher_lengths = torch.tensor(
+            [3],
+            dtype=torch.long,
+        )
+
+        _, teacher_chunk_id, _ = loss_fn._build_chunk_ids(
+            student_input_ids,
+            teacher_input_ids,
+            0,
+            teacher_lengths,
+        )
+
+        # Real teacher tokens should be assigned.
+        assert (teacher_chunk_id[0, :2] >= 0).any()
+
+        # Padding positions must remain unassigned.
+        assert torch.all(
+            teacher_chunk_id[0, 2:] == -1
+        )
 
 
 # ---------------------------------------------------------------------------

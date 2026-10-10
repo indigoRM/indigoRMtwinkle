@@ -599,6 +599,7 @@ def train():
         # groups, then collect the results afterwards.
         teacher_results = []
         teacher_input_ids_list = []
+        teacher_input_lengths_list = []
 
         for i, teacher_model in enumerate(teacher_models):
             teacher_results.append(
@@ -620,6 +621,12 @@ def train():
                     t_prompt_ids, batch_first=True, padding_value=0,
                 )
             )
+            teacher_input_lengths_list.append(
+                torch.tensor(
+                    [len(x) for x in t_prompt_ids],
+                    dtype=torch.long,
+                )
+            )
 
         # Collect only after all teacher forward tasks have been submitted.
         teacher_logits_list = []
@@ -635,7 +642,6 @@ def train():
         # to -100) and keeps template-structure positions (\n, <|im_start|>,
         # user/assistant) from dominating the loss.
         student_labels_list = []
-        student_ids_list = []
         for (resp, seq), v in zip(pairs, valid_pairs):
             if not v:
                 continue  # 短生成样本已过滤
@@ -644,17 +650,14 @@ def train():
             for p in range(len(resp.prompt_token_ids)):
                 labels[p] = -100
             student_labels_list.append(torch.tensor(labels, dtype=torch.long))
-            student_ids_list.append(torch.tensor(full_ids, dtype=torch.long))
         student_labels = rnn_utils.pad_sequence(
             student_labels_list, batch_first=True, padding_value=-100,
-        )
-        student_ids = rnn_utils.pad_sequence(
-            student_ids_list, batch_first=True, padding_value=0,
         )
 
         teacher_output = {
             'teacher_logits_group': teacher_logits_list,
             'teacher_input_ids_group': teacher_input_ids_list,
+            'teacher_input_lengths_group': teacher_input_lengths_list,
             'teacher_labels': [student_labels] * NUM_TEACHERS,
         }
 

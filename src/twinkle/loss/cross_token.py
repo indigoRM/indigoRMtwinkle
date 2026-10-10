@@ -607,6 +607,9 @@ class CrossTokenLoss(Loss):
         # ── Chunk-alignment input_ids (optional) ───────────────────────
         # Per-teacher input_ids for character-span chunk alignment.
         teacher_input_ids_group = kwargs.get('teacher_input_ids_group')
+        teacher_input_lengths_group = kwargs.get(
+            'teacher_input_lengths_group'
+        )
         student_ids_for_align = inputs.get('input_ids')  # list or tensor
 
         # Compute loss per teacher
@@ -719,6 +722,7 @@ class CrossTokenLoss(Loss):
             *,
             student_input_ids: Optional[torch.Tensor] = None,
             teacher_input_ids: Optional[torch.Tensor] = None,
+            teacher_input_lengths: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict]:
         """NeMo-style projection-KL loss with chunk alignment.
 
@@ -769,7 +773,10 @@ class CrossTokenLoss(Loss):
                 teacher_chunk_id,  # [B, Tt-1]  values in [-1, max_chunks)
                 max_chunks,
             ) = self._build_chunk_ids(
-                student_input_ids, teacher_input_ids, teacher_index,
+                student_input_ids,
+                teacher_input_ids,
+                teacher_index,
+                teacher_input_lengths,
             )
             # Trim seq dims to match the shifted logits
             s_clen = shift_student_logits.shape[1]
@@ -1037,6 +1044,7 @@ class CrossTokenLoss(Loss):
             student_input_ids: torch.Tensor,
             teacher_input_ids: torch.Tensor,
             teacher_index: int,
+            teacher_input_lengths: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, int]:
         """Build chunk-id tensors via character-span overlap.
 
@@ -1053,7 +1061,13 @@ class CrossTokenLoss(Loss):
         batch_size = student_input_ids.shape[0]
         # Use shifted lengths (position i predicts token i+1)
         s_len = student_input_ids.shape[1] - 1
+
+        # Teacher sequences are padded before reaching the loss.
+        # Keep tensor shapes unchanged, but alignment must ignore padded
+        # positions. The maximum length is still used for tensor allocation;
+        # per-sample valid lengths are handled below.
         t_len = teacher_input_ids.shape[1] - 1
+
         max_chunks = s_len  # one chunk per student token position
 
         teacher_tok = self.teacher_tokenizer_group[teacher_index]
@@ -1079,14 +1093,23 @@ class CrossTokenLoss(Loss):
             # shift 一位后用预测目标跨度:教师"预测'你'的位置"的预测目标
             # '你'与学生"你是"chunk 重叠 → 正确进 chunk(有稀释,不触底)。
             s_spans = s_spans_full[b][1:s_len + 1]  # token i+1 的跨度
-            t_spans = t_spans_full[b][1:t_len + 1]  # token t_pos+1 的跨度
+
+            # Use real teacher length before padding.
+            # Padding tokens should never create alignment chunks.
+            if teacher_input_lengths is not None:
+                real_t_len = int(teacher_input_lengths[b].item()) - 1
+            else:
+                real_t_len = t_len
+
+            t_spans = t_spans_full[b][1:real_t_len + 1]  # token t_pos+1 的跨度
 
             # Each student chunk = its own index
             for s_pos in range(s_len):
                 s_chunk_id[b, s_pos] = s_pos
 
-            # Assign each teacher position to best-overlap student chunk
-            for t_pos in range(t_len):
+            # Assign each real teacher position to best-overlap student chunk.
+            # Padding positions remain -1 in t_chunk_id.
+            for t_pos in range(real_t_len):
                 t_start, t_end = t_spans[t_pos]
                 best_s = -1
                 best_overlap = 0
@@ -1158,6 +1181,7 @@ class CrossTokenLoss(Loss):
             *,
             student_input_ids: Optional[torch.Tensor] = None,
             teacher_input_ids: Optional[torch.Tensor] = None,
+            teacher_input_lengths: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict]:
         """H-KL loss: common-KL + uncommon-L1 + ULD.
 
@@ -1195,7 +1219,10 @@ class CrossTokenLoss(Loss):
         )
         if use_chunk_alignment:
             s_chunk_id, t_chunk_id, max_chunks = self._build_chunk_ids(
-                student_input_ids, teacher_input_ids, teacher_index,
+                student_input_ids,
+                teacher_input_ids,
+                teacher_index,
+                teacher_input_lengths,
             )
             s_chunk_id = s_chunk_id.to(shift_student_logits.device)
             t_chunk_id = t_chunk_id.to(shift_student_logits.device)
