@@ -621,6 +621,13 @@ class CrossTokenLoss(Loss):
             t_logits = teacher_logits_group[i]
             weight = self.teacher_weights[i]
 
+            teacher_lengths = self._resolve_alignment_ids(
+                teacher_input_lengths_group,
+                i
+                if teacher_input_lengths_group is not None
+                else None,
+            )
+
             if self.loss_type == 'pkl':
                 # Resolve per-teacher chunk-alignment input_ids.
                 s_ids = self._resolve_alignment_ids(
@@ -635,6 +642,7 @@ class CrossTokenLoss(Loss):
                     student_logits, t_logits, labels, i,
                     student_input_ids=s_ids,
                     teacher_input_ids=t_ids,
+                    teacher_input_lengths=teacher_lengths,
                 )
             elif self.loss_type == 'hkl':
                 # 与 pkl 相同的 chunk 对齐输入(common-KL 用字符跨度对齐)
@@ -650,6 +658,7 @@ class CrossTokenLoss(Loss):
                     student_logits, t_logits, labels, i,
                     student_input_ids=s_ids,
                     teacher_input_ids=t_ids,
+                    teacher_input_lengths=teacher_lengths,
                 )
             else:
                 raise ValueError(f"Unknown loss_type: {self.loss_type}")
