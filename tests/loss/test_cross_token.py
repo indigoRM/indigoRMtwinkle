@@ -312,6 +312,157 @@ class TestCrossTokenLossMultiTeacher:
         assert torch.isfinite(result["loss"])
 
 
+    def test_two_teachers_with_chunk_alignment(self, monkeypatch):
+        """Multi-teacher mode should keep tokenizer chunk alignment enabled."""
+
+        student_tok = FakeTokenizer(30, prefix="tok")
+        t1 = FakeTokenizer(25, prefix="tok")
+        t2 = FakeTokenizer(20, prefix="tok")
+
+        loss_fn = CrossTokenLoss(
+            student_tokenizer=student_tok,
+            teacher_tokenizer_group=[t1, t2],
+            teacher_weights=[0.6, 0.4],
+            vocab_topk=10,
+            device=torch.device("cpu"),
+        )
+
+        called_teacher_indices = []
+
+        original_build_chunk_ids = loss_fn._build_chunk_ids
+
+        def wrapped_build_chunk_ids(
+                student_input_ids,
+                teacher_input_ids,
+                teacher_index,
+        ):
+            called_teacher_indices.append(teacher_index)
+            return original_build_chunk_ids(
+                student_input_ids,
+                teacher_input_ids,
+                teacher_index,
+            )
+
+        monkeypatch.setattr(
+            loss_fn,
+            "_build_chunk_ids",
+            wrapped_build_chunk_ids,
+        )
+
+        torch.manual_seed(2)
+
+        s_logits = torch.randn(2, 6, 30)
+        t1_logits = torch.randn(2, 7, 25)
+        t2_logits = torch.randn(2, 8, 20)
+
+        labels = torch.randint(0, 30, (2, 6))
+        labels[:, -1:] = -100
+
+        student_ids = torch.randint(0, 30, (2, 6))
+        teacher1_ids = torch.randint(0, 25, (2, 7))
+        teacher2_ids = torch.randint(0, 20, (2, 8))
+
+        result = loss_fn(
+            {
+                "labels": labels,
+                "input_ids": student_ids,
+            },
+            {
+                "logits": s_logits,
+            },
+            teacher_logits_group=[
+                t1_logits,
+                t2_logits,
+            ],
+            teacher_input_ids_group=[
+                teacher1_ids,
+                teacher2_ids,
+            ],
+        )
+
+        assert torch.isfinite(result["loss"])
+
+        # Both teachers should enter chunk alignment path.
+        assert called_teacher_indices == [0, 1]
+
+
+    def test_two_teachers_with_different_sequence_lengths_alignment(
+            self, monkeypatch
+    ):
+        """Chunk alignment should support teachers with different lengths."""
+
+        student_tok = FakeTokenizer(30, prefix="tok")
+        t1 = FakeTokenizer(25, prefix="tok")
+        t2 = FakeTokenizer(20, prefix="tok")
+
+        loss_fn = CrossTokenLoss(
+            student_tokenizer=student_tok,
+            teacher_tokenizer_group=[t1, t2],
+            teacher_weights=[0.5, 0.5],
+            vocab_topk=10,
+            device=torch.device("cpu"),
+        )
+
+        called_teacher_indices = []
+
+        original_build_chunk_ids = loss_fn._build_chunk_ids
+
+        def wrapped_build_chunk_ids(
+                student_input_ids,
+                teacher_input_ids,
+                teacher_index,
+        ):
+            called_teacher_indices.append(teacher_index)
+            return original_build_chunk_ids(
+                student_input_ids,
+                teacher_input_ids,
+                teacher_index,
+            )
+
+        monkeypatch.setattr(
+            loss_fn,
+            "_build_chunk_ids",
+            wrapped_build_chunk_ids,
+        )
+
+        torch.manual_seed(3)
+
+        # Student length = 6
+        # Teacher0 shorter = 3
+        # Teacher1 longer = 10
+        s_logits = torch.randn(2, 6, 30)
+        t1_logits = torch.randn(2, 3, 25)
+        t2_logits = torch.randn(2, 10, 20)
+
+        labels = torch.randint(0, 30, (2, 6))
+        labels[:, -1:] = -100
+
+        student_ids = torch.randint(0, 30, (2, 6))
+        teacher1_ids = torch.randint(0, 25, (2, 3))
+        teacher2_ids = torch.randint(0, 20, (2, 10))
+
+        result = loss_fn(
+            {
+                "labels": labels,
+                "input_ids": student_ids,
+            },
+            {
+                "logits": s_logits,
+            },
+            teacher_logits_group=[
+                t1_logits,
+                t2_logits,
+            ],
+            teacher_input_ids_group=[
+                teacher1_ids,
+                teacher2_ids,
+            ],
+        )
+
+        assert torch.isfinite(result["loss"])
+        assert called_teacher_indices == [0, 1]
+
+
 # ---------------------------------------------------------------------------
 # Tests: projection matrix & statistics
 # ---------------------------------------------------------------------------

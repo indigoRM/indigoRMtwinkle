@@ -762,7 +762,6 @@ class CrossTokenLoss(Loss):
         use_chunk_alignment = (
                 student_input_ids is not None
                 and teacher_input_ids is not None
-                and self.num_teachers == 1  # multi-teacher alignment is complex
         )
         if use_chunk_alignment:
             (
