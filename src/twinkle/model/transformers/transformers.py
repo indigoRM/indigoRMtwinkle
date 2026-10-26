@@ -1420,6 +1420,8 @@ class TransformersModel(TwinkleModel, PreTrainedModel, CheckpointEngineMixin):
                 torch.save(lr_scheduler.state_dict(), os.path.join(output_dir, 'scheduler.pt'))
 
     def _save_training_state(self, output_dir, **kwargs):
+        # Each rank may reach training-state saving before the master.
+        os.makedirs(output_dir, exist_ok=True)
         adapter_name = kwargs.pop('adapter_name', _default_adapter_name)
         self._save_optimizer(output_dir, adapter_name=adapter_name)
 

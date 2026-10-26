@@ -145,3 +145,24 @@ def test_save_marks_per_rank_rng_format(tmp_path, monkeypatch):
     state = json.loads((tmp_path / 'trainer_state.json').read_text())
     assert state['rng_state_format'] == 'per_rank'
     assert (tmp_path / 'rng_state_rank_0.pt').is_file()
+
+
+@pytest.mark.parametrize('rank', [0, 1])
+def test_save_creates_training_directory_on_each_rank(tmp_path, monkeypatch, rank):
+    set_rank(monkeypatch, rank)
+    wrapper = make_wrapper()
+    folder = tmp_path / 'new-run' / 'checkpoint'
+    assert not folder.exists()
+
+    optimizer_calls = []
+
+    def save_optimizer(output_dir, **kwargs):
+        assert folder.is_dir(), 'Directory must exist before optimizer saving'
+        optimizer_calls.append(str(output_dir))
+
+    wrapper._save_optimizer = save_optimizer
+    TransformersModel._save_training_state(wrapper, str(folder))
+
+    assert optimizer_calls == [str(folder)]
+    assert (folder / f'rng_state_rank_{rank}.pt').is_file()
+    assert (folder / 'trainer_state.json').exists() == (rank == 0)

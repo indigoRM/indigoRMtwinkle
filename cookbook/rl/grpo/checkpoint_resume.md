@@ -77,3 +77,39 @@ tensors changed.
 
 This validates continuation in the tested configuration, rather than
 GSM8K reward improvement.
+
+
+## Additional fault-injection and two-rank validation
+
+Additional experiments used Qwen2.5-0.5B-Instruct with synthetic nonzero
+rewards on Ascend NPUs.
+
+- Driver SIGKILL after a completed step-one checkpoint: a fresh process
+  resumed through step eight. Compared states at steps four and eight
+  matched the uninterrupted single-training-rank baseline exactly.
+- Driver SIGKILL before committing the step-two RL sidecar: only the
+  temporary sidecar remained. Loading this incomplete checkpoint was
+  rejected before model or dataloader restoration. The previous completed
+  checkpoint remained available; automatic fallback is not implemented.
+- Two training ranks and one sampler: resuming from step one matched the
+  uninterrupted two-rank baseline at steps four and eight. Comparisons
+  covered adapter weights, optimizer, scheduler, both ranks' RNG files,
+  trainer metadata and the complete RL controller state.
+- The second rollout's six remaining samples also matched, including
+  inputs, old log probabilities, advantages and metrics. Between steps
+  one and eight, 336 adapter tensors changed.
+
+The two-rank experiment exposed a directory-creation race during per-rank
+RNG saving. Each rank now ensures the training-state directory exists
+before saving optimizer or RNG state. Regression tests cover both ranks
+with a previously nonexistent directory.
+
+The targeted regression suite passed 31 tests. These experiments used a
+local Ray loopback initialization wrapper after a runtime-environment
+agent connection timeout. TBE and multiprocessing resource-tracker
+exceptions were still observed during process cleanup after final
+checkpoint saving; clean shutdown remains unresolved.
+
+These results establish continuation consistency for the tested
+configurations. They do not establish GSM8K reward improvement, Megatron
+continuation, asynchronous RL recovery or recovery across topology changes.
